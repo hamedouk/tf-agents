@@ -1,0 +1,16 @@
+default_agent: TFAgents_Agent
+is_agentcore_create_with_iac: true
+agents:
+  TFAgents_Agent:
+    name: TFAgents_Agent
+    entrypoint: /Users/hamedoukhay/oukhay/skillbuilder/TFAgents/src/main.py
+    deployment_type: container
+    source_path: /Users/hamedoukhay/oukhay/skillbuilder/TFAgents/src
+    aws:
+      account: null
+      region: null
+    bedrock_agentcore:
+      agent_id: null
+      agent_arn: null
+      agent_session_id: null
+    is_generated_by_agentcore_create: true
