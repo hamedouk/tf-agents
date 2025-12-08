@@ -17,3 +17,6 @@ dependencies = [
     "strands-agents >= 1.13.0",
     "strands-agents-tools >= 0.2.16"
 ]
+
+[tool.uv.workspace]
+members = ["agents/supervisor"]
