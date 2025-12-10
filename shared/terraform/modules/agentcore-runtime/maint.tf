@@ -141,6 +141,17 @@ resource "aws_iam_role_policy" "agentcore_runtime_execution_role_policy" {
           "arn:aws:bedrock-agentcore:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:memory/*",
         ]
       },
+      {
+        Sid    = "KnowledgeBaseAccess"
+        Effect = "Allow"
+        Action = [
+          "bedrock:Retrieve",
+          "bedrock:RetrieveAndGenerate",
+        ]
+        Resource = [
+          "arn:aws:bedrock:${data.aws_region.current.id}:${data.aws_caller_identity.current.account_id}:knowledge-base/*",
+        ]
+      },
     ]
   })
 }
@@ -170,9 +181,15 @@ resource "aws_bedrockagentcore_agent_runtime" "agentcore_runtime" {
   network_configuration {
     network_mode = "PUBLIC"
   }
-  environment_variables = {
-    CODE_VERSION = var.src_hash
-  }
+  environment_variables = merge(
+    {
+      CODE_VERSION = var.src_hash
+    },
+    var.knowledge_base_id != "" ? {
+      KNOWLEDGE_BASE_ID = var.knowledge_base_id
+      MIN_SCORE         = "0.5"
+    } : {}
+  )
 }
 
 

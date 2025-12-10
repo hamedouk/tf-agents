@@ -18,3 +18,9 @@ variable "image_tag" {
     type = string
     default = "latest"
 }
+
+variable "knowledge_base_id" {
+    description = "Bedrock Knowledge Base ID"
+    type = string
+    default = ""
+}

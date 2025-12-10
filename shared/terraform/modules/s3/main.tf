@@ -1,16 +1,17 @@
 # ============================================================================
-# S3 Buckets for Agent Source Code (CDK Asset Equivalent)
+# S3 Bucket
 # ============================================================================
 
-# Source Bucket
 resource "aws_s3_bucket" "source" {
   bucket_prefix = var.s3_bucket_prefix
-  force_destroy = true
+  force_destroy = var.force_destroy
 
-  tags = {
-    Name    = "${var.s3_bucket_prefix}"
-    Purpose = "Store agents source code for CodeBuild"
-  }
+  tags = merge(
+    var.tags,
+    {
+      Name = var.s3_bucket_prefix
+    }
+  )
 }
 
 # Enable encryption

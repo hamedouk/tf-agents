@@ -1,14 +1,21 @@
 locals {
   agent_name = "supervisor"
 }
-module "s3" {
-  source = "../../../shared/terraform/modules/s3"
-  s3_bucket_prefix = "tf-agents-code-src-"
+
+# Reference shared infrastructure
+data "terraform_remote_state" "shared" {
+  backend = "s3"
+  config = {
+    bucket  = "tfagents-terraform-state-730335657558"
+    key     = "tfagents/shared/infrastructure/terraform.tfstate"
+    region  = "us-west-2"
+    profile = "ai"
+  }
 }
 
 module code_upload {
   source = "../../../shared/terraform/modules/s3-upload"
-  bucket_id = module.s3.s3_bucket_id
+  bucket_id = data.terraform_remote_state.shared.outputs.agents_code_bucket_id
   agent_name = local.agent_name
   code_path = "${path.module}/../code/"
 }
@@ -24,11 +31,10 @@ module "codebuild" {
     description = "Codebuild project for the ${local.agent_name} agent"
     image_repo_name = module.agent_ecr.image_repo_name
     image_tag = "latest"
-    s3_source_location =  "${module.s3.s3_bucket_id}/${module.code_upload.s3_bucket_object_key}"
-    s3_source_arn =  module.s3.s3_bucket_arn
+    s3_source_location =  "${data.terraform_remote_state.shared.outputs.agents_code_bucket_id}/${module.code_upload.s3_bucket_object_key}"
+    s3_source_arn =  data.terraform_remote_state.shared.outputs.agents_code_bucket_arn
 
     depends_on = [
-     module.s3,
      module.code_upload,
      module.agent_ecr
     ]
@@ -66,6 +72,7 @@ module "agentcore_runtime" {
     src_hash = module.code_upload.s3_bucket_object_hash
     ecr_repository_url = module.agent_ecr.image_repo_url
     image_tag = module.codebuild.image_tag
+    knowledge_base_id = data.terraform_remote_state.shared.outputs.knowledge_base_id
     
     depends_on = [
       null_resource.trigger_build_agent

@@ -3,14 +3,15 @@ FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
 WORKDIR /app
 
-# Copy pyproject.toml
+# Copy pyproject.toml and uv.lock for dependency installation
 COPY pyproject.toml ./
 
-# Install dependencies (including strands-agents)
+# Install dependencies
 RUN uv sync --no-cache
 
-# Copy agent file
+# Copy application code
 COPY agent.py ./
+COPY app/ ./app/
 
 # Expose port
 EXPOSE 8080

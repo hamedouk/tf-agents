@@ -1,47 +1,9 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Dict, Any
-from datetime import datetime,timezone
-from strands import Agent
+"""Entry point for the Supervisor Agent application.
 
-app = FastAPI(title="Strands Agent Server", version="1.0.0")
+This module imports the FastAPI app from app.main and runs it using uvicorn.
+"""
 
-# Initialize Strands agent
-strands_agent = Agent()
-
-class InvocationRequest(BaseModel):
-    prompt: str
-
-class InvocationResponse(BaseModel):
-    output: Dict[str, Any]
-
-@app.post("/invocations", response_model=InvocationResponse)
-async def invoke_agent(request: InvocationRequest):
-    try:
-        user_message = request.prompt
-        if not user_message:
-            raise HTTPException(
-                status_code=400,
-                detail="No prompt found in request. Please provide a 'prompt' key."
-            )
-
-        result = strands_agent(user_message)
-        response = {
-            "output": {
-                "message": result.message,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "model": "strands-agent",
-            }
-        }
-
-        return InvocationResponse(**response)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Agent processing failed: {str(e)}")
-
-@app.get("/ping")
-async def ping():
-    return {"status": "healthy"}
+from app.main import app
 
 if __name__ == "__main__":
     import uvicorn
