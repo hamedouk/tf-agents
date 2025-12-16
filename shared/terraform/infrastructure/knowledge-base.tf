@@ -47,9 +47,10 @@ resource "aws_iam_role_policy" "knowledge_base" {
         Action = [
           "s3vectors:GetVectorBucket",
           "s3vectors:GetIndex",
-          "s3vectors:PutVector",
-          "s3vectors:GetVector",
-          "s3vectors:DeleteVector",
+          "s3vectors:PutVectors",
+          "s3vectors:ListVectors",
+          "s3vectors:GetVectors",
+          "s3vectors:DeleteVectors",
           "s3vectors:QueryVectors"
         ]
         Resource = [
@@ -85,6 +86,11 @@ module "vector_store" {
   distance_metric    = "cosine"
   data_type          = "float32"
   kb_role_arn        = aws_iam_role.knowledge_base.arn
+  non_filterable_metadata_keys = [
+    "AMAZON_BEDROCK_METADATA",
+    "AMAZON_BEDROCK_TEXT"
+  ]
+
 }
 
 
@@ -121,7 +127,7 @@ resource "aws_bedrockagent_data_source" "s3_docs" {
   name              = "${var.project_name}-s3-docs-${var.environment}"
   knowledge_base_id = module.knowledge_base.knowledge_base_id
 
-  data_deletion_policy = "RETAIN"
+  data_deletion_policy = "DELETE"
   
   data_source_configuration {
     type = "S3"
@@ -133,12 +139,12 @@ resource "aws_bedrockagent_data_source" "s3_docs" {
 
   vector_ingestion_configuration {
     chunking_configuration {
-      chunking_strategy = "FIXED_SIZE"
+      chunking_strategy = "NONE"
       
-      fixed_size_chunking_configuration {
-        max_tokens         = 300
-        overlap_percentage = 20
-      }
+      # fixed_size_chunking_configuration {
+      #   max_tokens         = 300
+      #   overlap_percentage = 20
+      # }
     }
   }
 }

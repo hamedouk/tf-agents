@@ -42,7 +42,9 @@ resource "awscc_s3vectors_vector_bucket_policy" "this" {
         Action = [
         "s3vectors:GetVectors",
         "s3vectors:PutVectors",
-        "s3vectors:DeleteVectors"
+        "s3vectors:DeleteVectors",
+        "s3vectors:ListVectors",
+        "s3vectors:QueryVectors"
         ]
         Resource = awscc_s3vectors_index.this.index_arn
       }

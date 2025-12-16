@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 import uuid
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+import json
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import StreamingResponse
 
 from app.config import Settings
 from app.exceptions import (
@@ -118,30 +120,43 @@ async def ready(
     )
 
 
-@app.post("/invocations", response_model=InvocationResponse, tags=["Agent"])
+@app.get("/debug/sessions", tags=["Debug"])
+async def debug_sessions(
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """
+    Debug endpoint to check active sessions.
+    
+    Returns information about currently active agent sessions.
+    """
+    return agent_service.get_session_info()
+
+
+@app.post("/invocations", tags=["Agent"])
 async def invoke_agent(
     request: InvocationRequest,
     http_request: Request,
     agent_service: AgentService = Depends(get_agent_service),
     settings: Settings = Depends(get_settings),
-) -> InvocationResponse:
+):
     """
-    Process an agent invocation with session management.
+    Process an agent invocation with optional streaming support.
     
-    Accepts a user prompt and optional session ID. If a session ID is provided,
-    the conversation history for that session is used as context. If no session
-    ID is provided, a new session is created.
+    Supports both regular JSON responses and streaming responses based on headers:
+    - Regular response: Default behavior, returns complete JSON response
+    - Streaming response: Set Accept header to "text/event-stream" or "application/x-ndjson"
     
     Session management is handled automatically by Strands based on the
     SESSION_MODE configuration (in_memory or agentcore_memory).
     
     Args:
         request: InvocationRequest containing prompt and optional session_id
+        http_request: HTTP request with headers for streaming control
         agent_service: Injected AgentService instance
         settings: Injected Settings instance
         
     Returns:
-        InvocationResponse with agent output, session_id, timestamp, and model info
+        InvocationResponse (JSON) or StreamingResponse based on Accept header
         
     Raises:
         HTTPException: 400 for validation errors, 500 for agent errors
@@ -163,28 +178,165 @@ async def invoke_agent(
         str(uuid.uuid4())
     )
     
+    # Check if streaming is requested via Accept header
+    accept_header = http_request.headers.get("accept", "").lower()
+    is_streaming = (
+        "text/event-stream" in accept_header or 
+        "application/x-ndjson" in accept_header or
+        http_request.headers.get("x-stream", "").lower() == "true"
+    )
+    
+    if is_streaming:
+        # Return streaming response
+        async def generate_stream():
+            """Generate streaming response."""
+            try:
+                async for event in agent_service.process_message_stream(
+                    prompt=request.prompt,
+                    session_id=session_id,
+                    actor_id=request.actor_id if hasattr(request, 'actor_id') else None
+                ):
+                    # Send each event as a JSON line
+                    yield f"data: {json.dumps(event)}\n\n"
+                    
+            except ValidationError:
+                # Re-raise validation errors
+                raise
+            except Exception as e:
+                # Send error as final event
+                error_event = {
+                    "error": str(e),
+                    "session_id": session_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                yield f"data: {json.dumps(error_event)}\n\n"
+        
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            }
+        )
+    
+    else:
+        # Return regular JSON response
+        try:
+            # Process the message - Strands handles session management automatically
+            result = agent_service.process_message(
+                prompt=request.prompt,
+                session_id=session_id,
+                actor_id=request.actor_id if hasattr(request, 'actor_id') else None
+            )
+            
+            # Return response
+            return InvocationResponse(
+                output={"response": result["output"]},
+                session_id=result["session_id"],
+                timestamp=result["timestamp"],
+                model=result["model"],
+            )
+            
+        except ValidationError:
+            # Re-raise validation errors
+            raise
+        except Exception as e:
+            # Wrap other errors as AgentError
+            raise AgentError(
+                message="Failed to process agent invocation",
+                details={"error": str(e), "session_id": session_id},
+            )
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    agent_service: AgentService = Depends(get_agent_service),
+):
+    """
+    WebSocket endpoint for real-time agent interaction.
+    
+    Supports session management via headers (AgentCore style) or message payload.
+    Streams back agent events in real-time as JSON messages.
+    
+    Session ID priority:
+    1. User-Agent header (AgentCore format: "AgentRuntime-Client/1.0 (Session: session_id)")
+    2. X-Amzn-Bedrock-AgentCore-Runtime-Session-Id header
+    3. session_id in message payload
+    4. Auto-generated UUID
+    
+    Message format:
+    - Send: {"prompt": "your message"}
+    - Receive: {"data": "text chunk", "session_id": "...", "timestamp": "..."}
+    """
+    # Extract session ID from headers before accepting connection
+    session_id = None
+    
+    # Method 1: Extract from User-Agent header (AgentCore format)
+    user_agent = websocket.headers.get("user-agent", "")
+    if "Session:" in user_agent:
+        try:
+            # Format: "AgentRuntime-Client/1.0 (Session: session_id)"
+            session_part = user_agent.split("Session:")[1].strip()
+            session_id = session_part.rstrip(")")
+        except (IndexError, AttributeError):
+            pass
+    
+    # Method 2: Extract from AgentCore session header
+    if not session_id:
+        session_id = websocket.headers.get("x-amzn-bedrock-agentcore-runtime-session-id")
+    
+    # Method 3: Extract from custom session header
+    if not session_id:
+        session_id = websocket.headers.get("x-session-id")
+    
+    # Method 4: Generate new session ID if none found
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    
+    await websocket.accept()
+    
+    print(f"WebSocket connected with session ID: {session_id}")
+    
     try:
-        # Process the message - Strands handles session management automatically
-        result = agent_service.process_message(
-            prompt=request.prompt,
-            session_id=session_id,
-            actor_id=request.actor_id if hasattr(request, 'actor_id') else None
-        )
-        
-        # Return response
-        return InvocationResponse(
-            output={"response": result["output"]},
-            session_id=result["session_id"],
-            timestamp=result["timestamp"],
-            model=result["model"],
-        )
-        
-    except ValidationError:
-        # Re-raise validation errors
-        raise
-    except Exception as e:
-        # Wrap other errors as AgentError
-        raise AgentError(
-            message="Failed to process agent invocation",
-            details={"error": str(e), "session_id": session_id},
-        )
+        while True:
+            # Receive message from client
+            data = await websocket.receive_text()
+            
+            try:
+                message = json.loads(data)
+                prompt = message.get("prompt")
+                
+                # Allow session_id override from message (fallback)
+                message_session_id = message.get("session_id", session_id)
+                
+                if not prompt or not prompt.strip():
+                    await websocket.send_text(json.dumps({
+                        "error": "Prompt is required and cannot be empty",
+                        "session_id": message_session_id,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }))
+                    continue
+                
+                # Stream agent response
+                async for event in agent_service.process_message_stream(
+                    prompt=prompt,
+                    session_id=message_session_id
+                ):
+                    await websocket.send_text(json.dumps(event))
+                    
+            except json.JSONDecodeError:
+                await websocket.send_text(json.dumps({
+                    "error": "Invalid JSON format",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }))
+            except Exception as e:
+                await websocket.send_text(json.dumps({
+                    "error": str(e),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }))
+                
+    except WebSocketDisconnect:
+        pass  # Client disconnected

@@ -14,4 +14,5 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
     "hypothesis>=6.0.0",
     "bedrock-agentcore[strands-agents]>=0.1.0",
+    "websockets>=12.0",
 ]
